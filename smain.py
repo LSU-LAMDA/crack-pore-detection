@@ -4,7 +4,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import segmentation_models_pytorch as smp
 import time
-from utils import Dataset, prepare_masks, get_preprocessing
+from utils import Dataset, prepare_masks, get_preprocessing, visualize
 
 if __name__ == '__main__':
     
@@ -45,10 +45,10 @@ if __name__ == '__main__':
         ACTIVATION = 'sigmoid'
 
         # phase
-        train = True
+        train = False
 
         # visualization
-        visualize = True
+        plot = True
 
         # smp.
         model = smp.Unet(
@@ -188,7 +188,7 @@ if __name__ == '__main__':
                 classes=CLASSES,
             )
 
-            if visualize:
+            if plot:
 
                 for i in range(40):
                     # n = np.random.choice(len(test_dataset))
