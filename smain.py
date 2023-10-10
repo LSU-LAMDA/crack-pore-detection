@@ -2,13 +2,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from sklearn.model_selection import KFold
 import segmentation_models_pytorch as smp
 import time
 from utils import Dataset, prepare_masks, get_preprocessing, visualize
 
 if __name__ == '__main__':
     
-    for iter in range(1):
+    for iter in range(10):
         print("$$$$$$$$$$$$$$$$$$$$$$$$$")
         print(f"$$$$$ iter = {iter} $$$$$")
         print("$$$$$$$$$$$$$$$$$$$$$$$$$")
@@ -36,8 +37,11 @@ if __name__ == '__main__':
         # Batch size for training (change depending on how much memory you have)
         batch_size = 8
 
+        # Cross-validation
+        k_folds = 5
+
         # Number of epochs to train for
-        num_epochs = 2
+        num_epochs = 100
 
         ENCODER = "resnet18"
         ENCODER_WEIGHTS = "imagenet"
@@ -45,20 +49,20 @@ if __name__ == '__main__':
         ACTIVATION = 'sigmoid'
 
         # phase
-        train = False
+        train = True
 
         # visualization
         plot = True
 
         # smp.
         model = smp.Unet(
-            # encoder_depth=3,
+            encoder_depth=3,
             encoder_name=ENCODER,        # choose encoder, e.g. mobilenet_v2 or efficientnet-b7
             encoder_weights=ENCODER_WEIGHTS,     # use `imagenet` pre-trained weights for encoder initialization
             in_channels=3,                  # model input channels (1 for gray-scale images, 3 for RGB, etc.)
             classes=len(CLASSES),                      # model output channels (number of classes in your dataset)
             activation= ACTIVATION,
-            # decoder_channels=[256,128,64]
+            decoder_channels=[256,128,64]
         )
 
         total_params = sum(p.numel() for p in model.parameters())
@@ -82,22 +86,6 @@ if __name__ == '__main__':
         # Setup the loss fxn
         criterion = nn.CrossEntropyLoss()
 
-        train_dataset = Dataset(x_trn_dir,
-                                y_trn_dir, 
-                                augmentation=None, 
-                                preprocessing=get_preprocessing(preprocessing_fn),
-                                classes=CLASSES)
-
-        valid_dataset = Dataset(x_val_dir, 
-                                y_val_dir, 
-                                augmentation=None, 
-                                preprocessing=get_preprocessing(preprocessing_fn),
-                                classes=CLASSES)
-
-
-        trn_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=1)
-        val_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=True, num_workers=1)
-
         loss = smp.utils.losses.DiceLoss()
         metrics = [
             smp.utils.metrics.IoU(threshold=0.5),
@@ -107,34 +95,72 @@ if __name__ == '__main__':
             dict(params=model.parameters(), lr=0.0001),
         ])
 
-        train_epoch = smp.utils.train.TrainEpoch(
-            model, 
-            loss=loss, 
-            metrics=metrics, 
-            optimizer=optimizer,
-            device=device,
-            verbose=True,
-        )
-
-        valid_epoch = smp.utils.train.ValidEpoch(
-            model, 
-            loss=loss, 
-            metrics=metrics, 
-            device=device,
-            verbose=True,
-        )
-
         if train:
+
+            kf = KFold(n_splits=k_folds, shuffle=True)
+
+            train_dataset = Dataset(x_trn_dir,
+                                    y_trn_dir, 
+                                    augmentation=None, 
+                                    preprocessing=get_preprocessing(preprocessing_fn),
+                                    classes=CLASSES)
+
+            # valid_dataset = Dataset(x_val_dir, 
+            #                         y_val_dir, 
+            #                         augmentation=None, 
+            #                         preprocessing=get_preprocessing(preprocessing_fn),
+            #                         classes=CLASSES)
+
+            
+
+            train_epoch = smp.utils.train.TrainEpoch(
+                model, 
+                loss=loss, 
+                metrics=metrics, 
+                optimizer=optimizer,
+                device=device,
+                verbose=True,
+            )
+
+            valid_epoch = smp.utils.train.ValidEpoch(
+                model, 
+                loss=loss, 
+                metrics=metrics, 
+                device=device,
+                verbose=True,
+            )
+
+            
+
+            
             # train model for num_epochs epochs
             max_score = 0
 
+
             for i in range(0, num_epochs):
-                
+
                 print('\nEpoch: {}'.format(i))
-                train_logs = train_epoch.run(trn_loader)
-                valid_logs = valid_epoch.run(val_loader)
+
+                for fold, (train_ids, val_ids) in enumerate(kf.split(train_dataset)):
+
+                    print(f"---Fold {fold + 1}")
+                    print("----------------------------")
+
+                    trn_loader = DataLoader(train_dataset,
+                                            batch_size=batch_size,
+                                            sampler=torch.utils.data.SubsetRandomSampler(train_ids),
+                                            num_workers=1)
+
+                    val_loader = DataLoader(train_dataset,
+                                            batch_size=batch_size,
+                                            sampler=torch.utils.data.SubsetRandomSampler(val_ids),
+                                            num_workers=1)  
                 
-                # do something (save model, change lr, etc.)
+                    print('\nEpoch: {}'.format(i))
+                    train_logs = train_epoch.run(trn_loader)
+                    valid_logs = valid_epoch.run(val_loader)
+                
+            # do something (save model, change lr, etc.)
                 if max_score < valid_logs['iou_score']:
                     max_score = valid_logs['iou_score']
                     torch.save(model, f'./best_model{iter}.pth')
@@ -190,7 +216,7 @@ if __name__ == '__main__':
 
             if plot:
 
-                for i in range(40):
+                for i in range(4):
                     # n = np.random.choice(len(test_dataset))
                     n=i
                     
